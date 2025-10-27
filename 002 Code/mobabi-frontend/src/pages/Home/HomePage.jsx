@@ -12,33 +12,58 @@ import { api } from "../../features/API";
 import PullRequestListView from "../../features/Visualization/PullRequestListView";
 import PullRequestDetailView from "../../features/Visualization/PullRequestDetailView";
 import FileBrowserView from "../../features/FileBrowser/FileBrowserView";
+import DiffView from "../../features/Diff/DiffView";
+import { useAuth } from "../../features/auth/AuthContext";
+import BeginnerHelp from "../BeginnerHelp"; // --- 👇 도움말 모달 import ---
 
 export default function HomePage(){
     const loc = useLocation();
     const nav = useNavigate();
     const { state, dispatch } = useGit();
+    const { user } = useAuth();
 
     const [showWelcome, setShowWelcome] = useState(Boolean(loc.state?.welcome));
+    const [showHelpModal, setShowHelpModal] = useState(false); // --- 👇 도움말 모달 상태 추가 ---
     const username = loc.state?.username || "환영합니다!";
 
+    // ... (useEffect 코드들은 이전과 동일) ...
     useEffect(() => {
         if (loc.state?.welcome) nav(".", { replace: true, state: {} });
     }, [loc.state, nav]);
 
     useEffect(() => {
+        if (!user) {
+            dispatch({ type: "SET_REPOS", payload: [] });
+            dispatch({ type: "SELECT_REPO", payload: null });
+            return;
+        }
+
         (async () => {
             try {
                 const list = await api.repos.list();
                 const arr = Array.isArray(list) ? list : (list?.items || []);
                 dispatch({ type: "SET_REPOS", payload: arr });
-                if (!state.selectedRepoId && arr.length) {
+
+                const currentRepoId = state.selectedRepoId;
+                const repoIdIsValid = arr.some(repo =>
+                    (repo.id || repo.repoId || repo._id) === currentRepoId
+                );
+
+                if (currentRepoId && !repoIdIsValid) {
+                    dispatch({ type: "SELECT_REPO", payload: null });
+                    if (arr.length) {
+                        dispatch({ type: "SELECT_REPO", payload: arr[0]?.id || arr[0]?.repoId || arr[0]?._id });
+                    }
+                } else if (!currentRepoId && arr.length) {
                     dispatch({ type: "SELECT_REPO", payload: arr[0]?.id || arr[0]?.repoId || arr[0]?._id });
                 }
             } catch {}
         })();
-    }, []);
+    }, [user, dispatch, state.selectedRepoId]);
+
 
     const renderCurrentView = () => {
+        // ... (renderCurrentView 코드는 이전과 동일) ...
         switch (state.currentView) {
             case "graph":
                 return (
@@ -47,8 +72,8 @@ export default function HomePage(){
                         <RepositoryView />
                     </>
                 );
-            case "diff": // ★ 신규 뷰
-                return <DiffSummaryView />;
+            case "diff":
+                return <DiffView />;
             case "prs":
                 return <PullRequestListView />;
             case "pr_detail":
@@ -80,7 +105,9 @@ export default function HomePage(){
                     <ActionButtons />
 
                     {state.currentView !== "pr_detail" && (
+                        // ... (탭 버튼 코드는 이전과 동일) ...
                         <div className="view-tabs">
+                            {/* ... 탭 버튼들 ... */}
                             <button
                                 className={`tab-btn ${state.currentView === "graph" ? "active" : ""}`}
                                 onClick={() => dispatch({ type: "SET_VIEW", payload: "graph" })}
@@ -96,6 +123,13 @@ export default function HomePage(){
                             </button>
 
                             <button
+                                className={`tab-btn ${state.currentView === "diff" ? "active" : ""}`}
+                                onClick={() => dispatch({ type: "SET_VIEW", payload: "diff" })}
+                            >
+                                변경 사항
+                            </button>
+
+                            <button
                                 className={`tab-btn ${state.currentView === "prs" ? "active" : ""}`}
                                 onClick={() => dispatch({ type: "SET_VIEW", payload: "prs" })}
                             >
@@ -108,6 +142,20 @@ export default function HomePage(){
                     {renderCurrentView()}
                 </div>
             </div>
+
+            {/* --- 👇 도움말 버튼 추가 --- */}
+            <button
+                className="help-button"
+                onClick={() => setShowHelpModal(true)}
+                title="도움말 보기"
+            >
+                ?
+            </button>
+
+            {/* --- 👇 도움말 모달 조건부 렌더링 --- */}
+            {showHelpModal && (
+                <BeginnerHelp onClose={() => setShowHelpModal(false)} />
+            )}
         </div>
     );
 }
