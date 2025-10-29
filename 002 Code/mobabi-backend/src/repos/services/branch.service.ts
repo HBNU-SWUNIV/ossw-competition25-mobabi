@@ -2,6 +2,7 @@ import {
   ConflictException,
   Injectable,
   InternalServerErrorException,
+  Logger,
   NotFoundException,
 } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
@@ -18,6 +19,8 @@ import { MergeResponse } from "@src/repos/dto/responses.dto";
 
 @Injectable()
 export class BranchService extends BaseRepoService {
+  private readonly logger = new Logger(BranchService.name);
+
   constructor(
     @InjectRepository(Repo)
     repoRepository: Repository<Repo>,
@@ -31,6 +34,8 @@ export class BranchService extends BaseRepoService {
 
     try {
       const branchRes = await git.branchLocal();
+      const currentBranch = branchRes.current;
+
       const branches = await Promise.all(
         branchRes.all.map(async (branchName) => {
           const logRes = await git.log<DefaultLogFields>([
@@ -47,10 +52,11 @@ export class BranchService extends BaseRepoService {
           return {
             name: branchName,
             pushedCommits: commits,
+            isCurrent: branchName === currentBranch,
           };
         }),
       );
-      return { branches };
+      return { branches, currentBranch };
     } catch (err) {
       throw new InternalServerErrorException(
         `Failed to get branches: ${err.message}`,
@@ -68,7 +74,18 @@ export class BranchService extends BaseRepoService {
     try {
       const options = baseBranchName ? [baseBranchName] : [];
       await git.checkout(["-b", newBranchName, ...options]);
-      return { success: true, message: `Branch '${newBranchName}' created.` };
+
+      const currentBranch = await git.revparse(["--abbrev-ref", "HEAD"]);
+      const currentCommit = await git.revparse(["HEAD"]);
+
+      return {
+        success: true,
+        message: `Branch '${newBranchName}' created.`,
+        branchName: newBranchName,
+        currentBranch: currentBranch.trim(),
+        currentCommit: currentCommit.trim(),
+        baseBranch: baseBranchName || null,
+      };
     } catch (err) {
       if (/already exists/i.test(err.message)) {
         throw new ConflictException(
@@ -140,7 +157,6 @@ export class BranchService extends BaseRepoService {
       const currentBranch = (await git.revparse(["--abbrev-ref", "HEAD"])).trim();
       const finalTargetBranch = targetBranch || currentBranch;
 
-      // 타겟 브랜치로 전환 (필요한 경우)
       if (currentBranch !== finalTargetBranch) {
         await git.checkout(finalTargetBranch);
       }
@@ -158,7 +174,6 @@ export class BranchService extends BaseRepoService {
       const afterHash = (await git.revparse(["HEAD"])).trim();
       const fastForward = beforeHash !== afterHash;
 
-      // 충돌 체크
       const statusResult = await git.status();
       const conflictFiles = statusResult.conflicted || [];
       const hasConflict = conflictFiles.length > 0;
@@ -196,6 +211,7 @@ export class BranchService extends BaseRepoService {
 
     try {
       const branchInfo = await git.branch(["-a"]);
+      const currentBranch = branchInfo.current;
       const localBranches: Record<string, string> = {};
       const remoteBranches: Record<string, string> = {};
 
@@ -211,10 +227,19 @@ export class BranchService extends BaseRepoService {
         }
       }
 
+      this.logger.debug(`Local branches: ${Object.entries(localBranches).map(([name, hash]) => `${name}: ${hash.substring(0, 7)}`).join(', ')}`);
+      this.logger.debug(`Remote branches: ${Object.entries(remoteBranches).map(([name, hash]) => `${name}: ${hash.substring(0, 7)}`).join(', ')}`);
+
       const pretty = "%H|%P|%an|%ai|%s";
+
+      const branchRefs = [
+        ...Object.keys(localBranches),
+        ...Object.keys(remoteBranches).map(b => `remotes/origin/${b}`)
+      ];
+
       const args: string[] = [
-        "--all",
-        "--reverse",
+        ...branchRefs,
+        "--date-order",
         `--max-count=${max}`,
         `--pretty=${pretty}`,
       ];
@@ -227,16 +252,167 @@ export class BranchService extends BaseRepoService {
         .filter(Boolean)
         .map((line) => {
           const [hash, parents, author, iso, msg] = line.split("|");
+          const parentsList = parents ? parents.split(" ") : [];
           return {
             hash,
-            parents: parents ? parents.split(" ") : [],
+            shortHash: hash.substring(0, 7),
+            parents: parentsList,
             author,
             committedAt: iso,
             message: msg,
+            isMerge: parentsList.length > 1,
           };
         });
 
-      // 각 브랜치별로 커밋 배열을 구성
+      // 각 브랜치의 fork point 계산: merge-base는 merge 후 정확하지 않으므로
+      // 브랜치 HEAD부터 역추적하여 main과 공통된 첫 커밋을 찾음
+      const branchForkPoints: Record<string, string | null> = {};
+
+      if (localBranches.main) {
+        // main의 첫 번째 부모만 추적
+        const mainCommits = new Set<string>();
+        let currentHash: string | null = localBranches.main;
+        const visited = new Set<string>();
+
+        this.logger.debug(`Collecting main commits (first-parent only), starting from: ${localBranches.main.substring(0, 7)}`);
+
+        while (currentHash && !visited.has(currentHash)) {
+          visited.add(currentHash);
+
+          const commit = allCommits.find(c => c.hash === currentHash || c.hash.startsWith(currentHash as string));
+          if (!commit) {
+            this.logger.debug(`Commit not found in allCommits: ${currentHash.substring(0, 7)}`);
+            break;
+          }
+
+          this.logger.debug(`Adding to mainCommits: ${commit.shortHash} ${commit.message}`);
+          mainCommits.add(commit.hash);
+
+          currentHash = commit.parents[0] || null;
+        }
+
+        this.logger.debug(`Total main commits collected: ${mainCommits.size}`);
+
+        for (const [branchName, headHash] of Object.entries(localBranches)) {
+          if (branchName === 'main') continue;
+
+          this.logger.debug(`Finding forkPoint for ${branchName}, HEAD: ${headHash.substring(0, 7)}`);
+
+          let branchHash: string | null = headHash;
+          const branchVisited = new Set<string>();
+          let forkPoint: string | null = null;
+
+          while (branchHash && !branchVisited.has(branchHash)) {
+            branchVisited.add(branchHash);
+            const commit = allCommits.find(c => c.hash === branchHash || c.hash.startsWith(branchHash as string));
+            if (!commit) {
+              this.logger.debug(`${branchName}: Commit not found: ${branchHash.substring(0, 7)}`);
+              break;
+            }
+
+            this.logger.debug(`${branchName}: Checking commit ${commit.shortHash} (${commit.message}), in main: ${mainCommits.has(commit.hash)}`);
+
+            if (mainCommits.has(commit.hash)) {
+              forkPoint = commit.hash;
+              this.logger.debug(`${branchName}: Found forkPoint: ${commit.shortHash} ${commit.message}`);
+              break;
+            }
+
+            branchHash = commit.parents[0] || null;
+          }
+
+          branchForkPoints[branchName] = forkPoint;
+          this.logger.debug(`${branchName}: Final forkPoint: ${forkPoint?.substring(0, 7) || 'null'}`);
+        }
+      }
+
+      const commitToBranches: Map<string, string[]> = new Map();
+
+      if (localBranches.main) {
+        const visited = new Set<string>();
+        let currentHash: string | null = localBranches.main;
+
+        while (currentHash && !visited.has(currentHash)) {
+          visited.add(currentHash);
+          const commit = allCommits.find(c => c.hash === currentHash || c.hash.startsWith(currentHash as string));
+          if (!commit) break;
+
+          const fullHash = commit.hash;
+          if (!commitToBranches.has(fullHash)) {
+            commitToBranches.set(fullHash, []);
+          }
+          commitToBranches.get(fullHash)?.push('main');
+
+          currentHash = commit.parents[0] || null;
+        }
+      }
+
+      for (const [branchName, headHash] of Object.entries(localBranches)) {
+        if (branchName === 'main') continue;
+
+        const forkPoint = branchForkPoints[branchName];
+        const visited = new Set<string>();
+        let currentHash: string | null = headHash;
+
+        while (currentHash && !visited.has(currentHash)) {
+          visited.add(currentHash);
+          const commit = allCommits.find(c => c.hash === currentHash || c.hash.startsWith(currentHash as string));
+          if (!commit) break;
+
+          const fullHash = commit.hash;
+
+          // fork point에 도달하면 중단
+          if (forkPoint && fullHash.startsWith(forkPoint)) {
+            if (!commitToBranches.has(fullHash)) {
+              commitToBranches.set(fullHash, []);
+            }
+            commitToBranches.get(fullHash)?.push(branchName);
+            break;
+          }
+
+          if (!commitToBranches.has(fullHash)) {
+            commitToBranches.set(fullHash, []);
+          }
+          commitToBranches.get(fullHash)?.push(branchName);
+
+          currentHash = commit.parents[0] || null;
+        }
+      }
+
+      const enrichedCommits = allCommits.map(commit => {
+        const branches = commitToBranches.get(commit.hash) || [];
+
+        // Local branches의 HEAD 확인
+        const localHeadsPointingHere = Object.entries(localBranches).filter(
+          ([_, hash]) => commit.hash === hash || commit.hash.startsWith(hash)
+        );
+
+        let localHeadBranch: string | null = null;
+        if (localHeadsPointingHere.length > 0) {
+          const mainHead = localHeadsPointingHere.find(([name, _]) => name === 'main');
+          localHeadBranch = mainHead ? mainHead[0] : localHeadsPointingHere[0][0];
+        }
+
+        // Remote branches의 HEAD 확인
+        const remoteHeadsPointingHere = Object.entries(remoteBranches).filter(
+          ([_, hash]) => commit.hash === hash || commit.hash.startsWith(hash)
+        );
+
+        let remoteHeadBranch: string | null = null;
+        if (remoteHeadsPointingHere.length > 0) {
+          const mainHead = remoteHeadsPointingHere.find(([name, _]) => name === 'main');
+          remoteHeadBranch = mainHead ? mainHead[0] : remoteHeadsPointingHere[0][0];
+        }
+
+        return {
+          ...commit,
+          branches,
+          isHead: localHeadBranch,  // 기존 호환성 유지
+          localIsHead: localHeadBranch,
+          remoteIsHead: remoteHeadBranch,
+        };
+      });
+
       const buildBranchCommits = (branchHeads: Record<string, string>) => {
         const result: Record<string, any[]> = {};
         for (const [branchName, headHash] of Object.entries(branchHeads)) {
@@ -255,26 +431,35 @@ export class BranchService extends BaseRepoService {
               author: commit.author,
               committedAt: commit.committedAt,
               parents: commit.parents,
-              files: [] // 파일 정보는 필요시 추가
+              files: []
             });
 
             currentHash = commit.parents[0] || null;
           }
 
-          result[branchName] = commits.reverse(); // 오래된 커밋부터
+          result[branchName] = commits;
         }
         return result;
       };
 
       const local = {
-        branches: buildBranchCommits(localBranches)
+        branches: buildBranchCommits(localBranches),
+        branchHeads: localBranches,
       };
 
       const remote = {
-        branches: buildBranchCommits(remoteBranches)
+        branches: buildBranchCommits(remoteBranches),
+        branchHeads: remoteBranches,
       };
 
-      return { local, remote };
+      return {
+        local,
+        remote,
+        currentBranch,
+        branchHeads: localBranches,
+        commits: enrichedCommits,
+        forkPoints: branchForkPoints,
+      };
     } catch (err) {
       throw new InternalServerErrorException(
         `Failed to get commit graph: ${err.message}`,

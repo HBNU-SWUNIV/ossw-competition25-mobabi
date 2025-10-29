@@ -1,4 +1,4 @@
-import { Injectable } from "@nestjs/common";
+import { Injectable, Logger } from "@nestjs/common";
 import {
   FileNotFoundException,
   FileAlreadyExistsException,
@@ -11,6 +11,7 @@ import { Repo } from "@src/repos/entities/repo.entity";
 import { ConfigService } from "@nestjs/config";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
+import ignore from "ignore";
 import {
   FileItem,
   FolderItem,
@@ -27,6 +28,7 @@ import { BaseRepoService } from "@src/repos/services/base-repo.service";
 
 @Injectable()
 export class FileService extends BaseRepoService {
+  private readonly logger = new Logger(FileService.name);
   private readonly MAX_FILENAME_BYTES = 200; // Linux 파일시스템 255바이트 제한, 안전하게 200바이트로 설정
 
   constructor(
@@ -153,7 +155,6 @@ export class FileService extends BaseRepoService {
     filePath = "",
     overwrite = false,
   ): Promise<FileOperationResult> {
-    // 파일명 길이 검증
     this.validateFilename(filename);
 
     const { repo } = await this.getRepoAndGit(repoId, userId);
@@ -222,27 +223,56 @@ export class FileService extends BaseRepoService {
     userId: string,
     filePath: string,
   ): Promise<FileDeleteResult> {
-    const { repo } = await this.getRepoAndGit(repoId, userId);
+    const { repo, git } = await this.getRepoAndGit(repoId, userId);
 
     const fullPath = path.join(repo.gitPath, filePath);
 
     try {
       const stats = await fs.stat(fullPath);
+      const isDirectory = stats.isDirectory();
 
-      if (stats.isDirectory()) {
+      if (isDirectory) {
         await fs.rm(fullPath, { recursive: true });
       } else {
         await fs.unlink(fullPath);
       }
 
+      // Git에 삭제 상태를 스테이징 (git add 또는 git rm)
+      try {
+        // git add는 삭제된 파일도 자동으로 스테이징합니다
+        await git.add(filePath);
+      } catch (gitError) {
+        // git add가 실패하면 (이미 추적되지 않는 파일 등) 무시
+        this.logger.warn(`Git add failed for ${filePath}: ${gitError.message}`);
+      }
+
       return {
         success: true,
         deletedPath: filePath,
-        type: stats.isDirectory() ? ("folder" as const) : ("file" as const),
+        type: isDirectory ? ("folder" as const) : ("file" as const),
       } as FileDeleteResult;
     } catch (err) {
       if (err.code === "ENOENT") {
         throw new FileNotFoundException(filePath);
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * .gitignore 파일을 읽고 ignore 인스턴스 생성
+   */
+  private async loadGitignore(repoPath: string): Promise<ReturnType<typeof ignore> | null> {
+    try {
+      const gitignorePath = path.join(repoPath, '.gitignore');
+      const gitignoreContent = await fs.readFile(gitignorePath, 'utf8');
+      const ig = ignore();
+      ig.add(gitignoreContent);
+      return ig;
+    } catch (err) {
+      // .gitignore 파일이 없으면 null 반환
+      if (err.code === 'ENOENT') {
+        return null;
       }
       throw err;
     }
@@ -254,26 +284,53 @@ export class FileService extends BaseRepoService {
     files: Express.Multer.File[],
     uploadPath = "",
     overwrite = false,
+    paths?: string[],
   ): Promise<UploadResult> {
-    // 모든 파일명 검증 (업로드 시작 전에 미리 검증)
-    for (const file of files) {
-      this.validateFilename(file.originalname);
+    this.logger.debug(`uploadFiles 호출: filesCount=${files.length}, uploadPath=${uploadPath}, overwrite=${overwrite}, paths=${JSON.stringify(paths)}, fileOriginalNames=${JSON.stringify(files.map(f => f.originalname))}`);
+
+    for (let i = 0; i < files.length; i++) {
+      const filePathToValidate = paths && paths[i] ? paths[i] : files[i].originalname;
+      this.logger.debug(`파일 ${i}: originalname=${files[i].originalname}, path=${paths?.[i]}, using=${filePathToValidate}`);
+      this.validateFilename(filePathToValidate);
     }
 
     const { repo } = await this.getRepoAndGit(repoId, userId);
+
+    const ig = await this.loadGitignore(repo.gitPath);
+
+    const filteredFiles: Array<{ file: Express.Multer.File; relativePath: string }> = [];
+    const ignoredFiles: string[] = [];
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const relativePath = paths && paths[i] ? paths[i] : file.originalname;
+      const relativeFilePath = path.join(uploadPath, relativePath).replace(/\\/g, "/");
+
+      if (ig && ig.ignores(relativeFilePath)) {
+        ignoredFiles.push(relativePath);
+      } else {
+        filteredFiles.push({ file, relativePath });
+      }
+    }
 
     const targetDir = path.join(repo.gitPath, uploadPath);
     await this.ensureDirectoryExists(targetDir);
 
     const uploadedFiles: UploadedFileInfo[] = [];
 
-    for (const file of files) {
-      const targetFilePath = path.join(targetDir, file.originalname);
+    for (const { file, relativePath } of filteredFiles) {
+      const fileDir = path.dirname(relativePath);
+      const fileName = path.basename(relativePath);
+
+      const fullTargetDir = path.join(targetDir, fileDir);
+      await this.ensureDirectoryExists(fullTargetDir);
+
+      const targetFilePath = path.join(fullTargetDir, fileName);
 
       if (!overwrite) {
         try {
           await fs.access(targetFilePath);
-          throw new FileAlreadyExistsException(file.originalname);
+          throw new FileAlreadyExistsException(relativePath);
         } catch (err) {
           if (err.code !== "ENOENT") throw err;
         }
@@ -283,9 +340,9 @@ export class FileService extends BaseRepoService {
 
       const stats = await fs.stat(targetFilePath);
       uploadedFiles.push({
-        originalname: file.originalname,
-        filename: file.originalname,
-        path: path.join(uploadPath, file.originalname).replace(/\\/g, "/"),
+        originalname: relativePath,
+        filename: relativePath,
+        path: path.join(uploadPath, relativePath).replace(/\\/g, "/"),
         size: stats.size,
         mimetype: file.mimetype,
         modifiedAt: stats.mtime,
@@ -296,6 +353,11 @@ export class FileService extends BaseRepoService {
       success: true,
       uploadedFiles,
       uploadPath,
+      ...(ignoredFiles.length > 0 && {
+        ignoredFiles,
+        ignoredCount: ignoredFiles.length,
+        message: `${uploadedFiles.length}개 파일 업로드 완료, ${ignoredFiles.length}개 파일 제외(.gitignore)`
+      }),
     };
   }
 }
