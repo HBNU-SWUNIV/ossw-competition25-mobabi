@@ -5,6 +5,7 @@ import { ConfigService } from "@nestjs/config";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
 import { Repo } from "@src/repos/entities/repo.entity";
+import { RepoCollaborator } from "@src/repos/entities/repo-collaborator.entity";
 import { User } from "@src/users/entities/user.entity";
 import { BaseRepoService } from "@src/repos/services/base-repo.service";
 import { GitOperationException } from "@src/repos/exceptions/repo.exceptions";
@@ -17,9 +18,11 @@ export class GitOperationService extends BaseRepoService {
   constructor(
     @InjectRepository(Repo)
     repoRepository: Repository<Repo>,
+    @InjectRepository(RepoCollaborator)
+    collaboratorRepository: Repository<RepoCollaborator>,
     configService: ConfigService,
   ) {
-    super(repoRepository, configService);
+    super(repoRepository, collaboratorRepository, configService);
   }
 
   async status(repoId: string, userId: string) {
@@ -56,7 +59,7 @@ export class GitOperationService extends BaseRepoService {
   }
 
   async addFiles(repoId: string, userId: string, files?: string[]) {
-    const { repo, git } = await this.getRepoAndGit(repoId, userId);
+    const { repoPath, git } = await this.getRepoAndGit(repoId, userId);
 
     if (!files || files.length === 0) {
       try {
@@ -72,7 +75,7 @@ export class GitOperationService extends BaseRepoService {
     const validFiles: string[] = [];
 
     for (const file of files) {
-      const filePath = path.join(repo.gitPath, file);
+      const filePath = path.join(repoPath, file);
       try {
         await fs.access(filePath);
         validFiles.push(file);
@@ -103,7 +106,7 @@ export class GitOperationService extends BaseRepoService {
     message: string,
     branch?: string,
   ) {
-    const { repo, git } = await this.getRepoAndGit(repoId, userId);
+    const { git } = await this.getRepoAndGit(repoId, userId);
 
     if (branch) {
       try {

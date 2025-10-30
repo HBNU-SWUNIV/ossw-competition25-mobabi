@@ -2,6 +2,7 @@ import { Injectable } from "@nestjs/common";
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { Repo } from "@src/repos/entities/repo.entity";
+import { RepoCollaborator } from "@src/repos/entities/repo-collaborator.entity";
 import { ConfigService } from "@nestjs/config";
 import { BaseRepoService } from "@src/repos/services/base-repo.service";
 import * as simpleGit from "simple-git";
@@ -29,9 +30,11 @@ export class GitConflictService extends BaseRepoService {
   constructor(
     @InjectRepository(Repo)
     repoRepository: Repository<Repo>,
+    @InjectRepository(RepoCollaborator)
+    collaboratorRepository: Repository<RepoCollaborator>,
     configService: ConfigService,
   ) {
-    super(repoRepository, configService);
+    super(repoRepository, collaboratorRepository, configService);
   }
 
   /**
@@ -93,19 +96,15 @@ export class GitConflictService extends BaseRepoService {
     // 1. 로컬 변경사항 확인
     const uncommittedChanges = await this.checkUncommittedChanges(repoId, userId);
     if (uncommittedChanges.length > 0) {
-      // 변경사항을 자동으로 stash
       const stashResult = await this.autoStash(repoId, userId);
 
       try {
-        // Pull 시도
         await git.pull(remote, branch);
 
-        // Stash 복원
         if (stashResult) {
           await this.applyStash(repoId, userId, stashResult.stashId);
         }
 
-        // 충돌 확인
         const conflictInfo = await this.checkForConflicts(repoId, userId);
 
         return {
@@ -117,7 +116,6 @@ export class GitConflictService extends BaseRepoService {
             : "Pull 성공 (로컬 변경사항 자동 저장 및 복원)"
         };
       } catch (error) {
-        // Pull 실패 시 stash 복원 시도
         if (stashResult) {
           try {
             await this.applyStash(repoId, userId, stashResult.stashId);
@@ -127,12 +125,10 @@ export class GitConflictService extends BaseRepoService {
           }
         }
 
-        // 충돌이 아닌 다른 에러는 그대로 던짐
         if (!/merge conflict|CONFLICT/i.test(error.message)) {
           throw error;
         }
 
-        // 충돌 정보 반환
         const conflictInfo = await this.checkForConflicts(repoId, userId);
         return {
           success: true,
@@ -143,11 +139,9 @@ export class GitConflictService extends BaseRepoService {
       }
     }
 
-    // 2. 변경사항이 없으면 바로 Pull
     try {
       await git.pull(remote, branch);
 
-      // 충돌 확인
       const conflictInfo = await this.checkForConflicts(repoId, userId);
 
       return {
@@ -157,12 +151,10 @@ export class GitConflictService extends BaseRepoService {
         message: conflictInfo.hasConflict ? "Pull 중 충돌이 발생했습니다" : "Pull 성공"
       };
     } catch (error) {
-      // 충돌이 아닌 다른 에러는 그대로 던짐
       if (!/merge conflict|CONFLICT/i.test(error.message)) {
         throw error;
       }
 
-      // 충돌 정보 반환
       const conflictInfo = await this.checkForConflicts(repoId, userId);
       return {
         success: true,
@@ -196,7 +188,6 @@ export class GitConflictService extends BaseRepoService {
     } catch (error) {
       const errorMessage = error.message || error.toString();
 
-      // Push 거부 처리
       if (errorMessage.includes("rejected") || errorMessage.includes("non-fast-forward")) {
         throw new GitPushRejectedException({
           reason: errorMessage.includes("non-fast-forward")
@@ -228,11 +219,9 @@ export class GitConflictService extends BaseRepoService {
   }> {
     const { git } = await this.getRepoAndGit(repoId, userId);
 
-    // 현재 브랜치 확인
     const status = await git.status();
     const currentBranch = status.current;
 
-    // 대상 브랜치로 체크아웃
     if (targetBranch && targetBranch !== currentBranch) {
       await git.checkout(targetBranch);
     }
@@ -253,16 +242,13 @@ export class GitConflictService extends BaseRepoService {
           : `${sourceBranch}를 성공적으로 병합했습니다`
       };
     } catch (error) {
-      // 충돌이 아닌 다른 에러는 그대로 던짐
       if (!/merge conflict|CONFLICT/i.test(error.message)) {
-        // 원래 브랜치로 복귀
         if (targetBranch && currentBranch && targetBranch !== currentBranch) {
           await git.checkout(currentBranch);
         }
         throw error;
       }
 
-      // 충돌 정보 반환
       const conflictInfo = await this.checkForConflicts(repoId, userId);
       return {
         success: true,
@@ -285,7 +271,6 @@ export class GitConflictService extends BaseRepoService {
     try {
       await git.stash(["push", "-m", message]);
 
-      // Stash 목록에서 방금 생성한 stash 찾기
       const stashList = await git.stashList();
       const latestStash = stashList.latest;
 
@@ -298,7 +283,6 @@ export class GitConflictService extends BaseRepoService {
 
       return null;
     } catch (error) {
-      // Stash할 내용이 없는 경우
       return null;
     }
   }
@@ -312,7 +296,6 @@ export class GitConflictService extends BaseRepoService {
     try {
       await git.stash(["apply", stashId]);
     } catch (error) {
-      // Stash 적용 중 충돌 발생
       const conflictFiles = await this.getConflictFiles(git);
       if (conflictFiles.length > 0) {
         throw new GitStashConflictException(conflictFiles);
@@ -339,27 +322,23 @@ export class GitConflictService extends BaseRepoService {
     resolution: "ours" | "theirs" | "manual",
     manualContent?: string,
   ): Promise<{ success: boolean; message: string }> {
-    const { git, repo } = await this.getRepoAndGit(repoId, userId);
+    const { git, repoPath } = await this.getRepoAndGit(repoId, userId);
 
     try {
       if (resolution === "ours") {
-        // 현재 브랜치의 버전 선택
         await git.checkout(["--ours", filePath]);
         await git.add(filePath);
       } else if (resolution === "theirs") {
-        // 병합 대상 브랜치의 버전 선택
         await git.checkout(["--theirs", filePath]);
         await git.add(filePath);
       } else if (resolution === "manual" && manualContent !== undefined) {
-        // 수동으로 해결한 내용 저장
         const fs = await import("fs/promises");
         const path = await import("path");
-        const fullPath = path.join(repo.gitPath, filePath);
+        const fullPath = path.join(repoPath, filePath);
         await fs.writeFile(fullPath, manualContent, "utf8");
         await git.add(filePath);
       }
 
-      // 모든 충돌이 해결되었는지 확인
       const conflictInfo = await this.checkForConflicts(repoId, userId);
 
       if (!conflictInfo.hasConflict) {

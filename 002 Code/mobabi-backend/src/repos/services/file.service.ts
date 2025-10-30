@@ -1,4 +1,4 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { Injectable, Logger, HttpException, HttpStatus } from "@nestjs/common";
 import {
   FileNotFoundException,
   FileAlreadyExistsException,
@@ -8,6 +8,7 @@ import {
 import { InjectRepository } from "@nestjs/typeorm";
 import { Repository } from "typeorm";
 import { Repo } from "@src/repos/entities/repo.entity";
+import { RepoCollaborator } from "@src/repos/entities/repo-collaborator.entity";
 import { ConfigService } from "@nestjs/config";
 import { promises as fs } from "node:fs";
 import * as path from "node:path";
@@ -34,9 +35,11 @@ export class FileService extends BaseRepoService {
   constructor(
     @InjectRepository(Repo)
     repoRepository: Repository<Repo>,
+    @InjectRepository(RepoCollaborator)
+    collaboratorRepository: Repository<RepoCollaborator>,
     configService: ConfigService,
   ) {
-    super(repoRepository, configService);
+    super(repoRepository, collaboratorRepository, configService);
   }
 
   /**
@@ -56,15 +59,15 @@ export class FileService extends BaseRepoService {
     userId: string,
     filePath = "",
   ): Promise<FileBrowseResult> {
-    const { repo } = await this.getRepoAndGit(repoId, userId);
+    const { repoPath } = await this.getRepoAndGit(repoId, userId);
 
-    const targetPath = path.join(repo.gitPath, filePath);
+    const targetPath = path.join(repoPath, filePath);
 
     try {
       const stats = await fs.stat(targetPath);
 
       if (stats.isFile()) {
-        return this.getFileContent(repo.gitPath, filePath);
+        return this.getFileContent(repoPath, filePath);
       } else {
         const entries = await fs.readdir(targetPath, { withFileTypes: true });
 
@@ -157,9 +160,9 @@ export class FileService extends BaseRepoService {
   ): Promise<FileOperationResult> {
     this.validateFilename(filename);
 
-    const { repo } = await this.getRepoAndGit(repoId, userId);
+    const { repoPath } = await this.getRepoAndGit(repoId, userId);
 
-    const targetDir = path.join(repo.gitPath, filePath);
+    const targetDir = path.join(repoPath, filePath);
     await this.ensureDirectoryExists(targetDir);
 
     const fullFilePath = path.join(targetDir, filename);
@@ -191,9 +194,9 @@ export class FileService extends BaseRepoService {
     filePath: string,
     content: string,
   ): Promise<FileOperationResult> {
-    const { repo } = await this.getRepoAndGit(repoId, userId);
+    const { repoPath } = await this.getRepoAndGit(repoId, userId);
 
-    const fullPath = path.join(repo.gitPath, filePath);
+    const fullPath = path.join(repoPath, filePath);
 
     try {
       const stats = await fs.stat(fullPath);
@@ -223,9 +226,13 @@ export class FileService extends BaseRepoService {
     userId: string,
     filePath: string,
   ): Promise<FileDeleteResult> {
-    const { repo, git } = await this.getRepoAndGit(repoId, userId);
+    if (!filePath) {
+      throw new HttpException("파일 경로가 필요합니다.", HttpStatus.BAD_REQUEST);
+    }
 
-    const fullPath = path.join(repo.gitPath, filePath);
+    const { git, repoPath } = await this.getRepoAndGit(repoId, userId);
+
+    const fullPath = path.join(repoPath, filePath);
 
     try {
       const stats = await fs.stat(fullPath);
@@ -294,9 +301,9 @@ export class FileService extends BaseRepoService {
       this.validateFilename(filePathToValidate);
     }
 
-    const { repo } = await this.getRepoAndGit(repoId, userId);
+    const { repoPath } = await this.getRepoAndGit(repoId, userId);
 
-    const ig = await this.loadGitignore(repo.gitPath);
+    const ig = await this.loadGitignore(repoPath);
 
     const filteredFiles: Array<{ file: Express.Multer.File; relativePath: string }> = [];
     const ignoredFiles: string[] = [];
@@ -313,7 +320,7 @@ export class FileService extends BaseRepoService {
       }
     }
 
-    const targetDir = path.join(repo.gitPath, uploadPath);
+    const targetDir = path.join(repoPath, uploadPath);
     await this.ensureDirectoryExists(targetDir);
 
     const uploadedFiles: UploadedFileInfo[] = [];

@@ -3,6 +3,7 @@ import { InjectRepository } from "@nestjs/typeorm";
 import { Repo } from "@src/repos/entities/repo.entity";
 import { PullRequest } from "@src/repos/entities/pull-request.entity";
 import { PrReview } from "@src/repos/entities/pr-review.entity";
+import { RepoCollaborator } from "@src/repos/entities/repo-collaborator.entity";
 import { CreateRepoDto } from "@src/repos/dto/create-repo.dto";
 import { ForkRepoDto } from "@src/repos/dto/fork-repo.dto";
 import { RepoResponseDto, RepoOwnerDto } from "@src/repos/dto/repo-response.dto";
@@ -18,13 +19,15 @@ export class ReposService extends BaseRepoService {
   constructor(
     @InjectRepository(Repo)
     repoRepository: Repository<Repo>,
+    @InjectRepository(RepoCollaborator)
+    collaboratorRepository: Repository<RepoCollaborator>,
     @InjectRepository(PullRequest)
     private readonly pullRequestRepository: Repository<PullRequest>,
     @InjectRepository(PrReview)
     private readonly prReviewRepository: Repository<PrReview>,
     configService: ConfigService,
   ) {
-    super(repoRepository, configService);
+    super(repoRepository, collaboratorRepository, configService);
   }
 
   async createRepo(
@@ -34,23 +37,29 @@ export class ReposService extends BaseRepoService {
     const newRepo = this.repoRepository.create({ ...createRepoDto, ownerId });
     const savedRepo = await this.repoRepository.save(newRepo);
 
-    savedRepo.gitPath = path.join(this.repoBasePath, savedRepo.repoId);
-
     try {
-      await this.ensureDirectoryExists(savedRepo.gitPath);
-      const git = simpleGit(savedRepo.gitPath);
+      const remotePath = path.join(this.remoteBasePath, `${savedRepo.repoId}.git`);
+      const ownerRepoPath = path.join(this.repoBasePath, ownerId, savedRepo.repoId);
+
+      await this.ensureDirectoryExists(remotePath);
+      const remoteGit = simpleGit(remotePath);
+      await remoteGit.init(true, { "--initial-branch": "main" });
+
+      await this.ensureDirectoryExists(ownerRepoPath);
+      const git = simpleGit(ownerRepoPath);
 
       await git.init(false, { "--initial-branch": "main" });
       await git.addConfig("commit.gpgsign", "false");
+
+      await git.addRemote("origin", remotePath);
+
       await git.commit("Initial commit", undefined, {
         "--allow-empty": null,
         "--no-gpg-sign": null,
       });
 
-      const repo = await this.repoRepository.save(savedRepo);
-
       const repoWithOwner = await this.repoRepository.findOne({
-        where: { repoId: repo.repoId },
+        where: { repoId: savedRepo.repoId },
         relations: ["owner"],
       });
 
@@ -75,6 +84,33 @@ export class ReposService extends BaseRepoService {
     });
 
     return repos.map(repo => this.toRepoResponseDto(repo));
+  }
+
+  async findReposByUserAccess(userId: string): Promise<RepoResponseDto[]> {
+    const ownedRepos = await this.repoRepository.find({
+      where: { ownerId: userId },
+      relations: ["owner"],
+    });
+
+    const collaborations = await this.collaboratorRepository.find({
+      where: { userId },
+      relations: ["repo", "repo.owner"],
+    });
+
+    const collaboratorRepos = collaborations.map(c => c.repo);
+
+    const allRepos = [...ownedRepos];
+    const ownedRepoIds = new Set(ownedRepos.map(r => r.repoId));
+
+    for (const repo of collaboratorRepos) {
+      if (!ownedRepoIds.has(repo.repoId)) {
+        allRepos.push(repo);
+      }
+    }
+
+    allRepos.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+
+    return allRepos.map(repo => this.toRepoResponseDto(repo));
   }
 
   private toRepoResponseDto(repo: Repo): RepoResponseDto {
@@ -145,21 +181,43 @@ export class ReposService extends BaseRepoService {
     });
 
     const savedRepo = await this.repoRepository.save(newRepo);
-    savedRepo.gitPath = path.join(this.repoBasePath, savedRepo.repoId);
 
     try {
-      await this.ensureDirectoryExists(path.dirname(savedRepo.gitPath));
+      const sourceRemotePath = path.join(this.remoteBasePath, `${sourceRepoId}.git`);
+      const forkedRemotePath = path.join(this.remoteBasePath, `${savedRepo.repoId}.git`);
+      const forkedUserRepoPath = path.join(this.repoBasePath, userId, savedRepo.repoId);
+
+      await this.ensureDirectoryExists(path.dirname(forkedRemotePath));
       const git = simpleGit();
+      await git.clone(sourceRemotePath, forkedRemotePath, ['--mirror']);
 
-      await git.clone(sourceRepo.gitPath, savedRepo.gitPath);
+      await this.ensureDirectoryExists(path.dirname(forkedUserRepoPath));
+      await git.clone(forkedRemotePath, forkedUserRepoPath);
 
-      const forkedGit = simpleGit(savedRepo.gitPath);
+      const forkedGit = simpleGit(forkedUserRepoPath);
       await forkedGit.addConfig("commit.gpgsign", "false");
 
-      const repo = await this.repoRepository.save(savedRepo);
+      const branches = await forkedGit.branch(['-r']);
+      const currentBranch = (await forkedGit.revparse(['--abbrev-ref', 'HEAD'])).trim();
+
+      for (const remoteBranch of Object.keys(branches.branches)) {
+        if (remoteBranch.includes('origin/') && !remoteBranch.includes('HEAD')) {
+          const localBranchName = remoteBranch.replace('origin/', '');
+
+          if (localBranchName !== currentBranch) {
+            try {
+              await forkedGit.checkout(['-b', localBranchName, remoteBranch]);
+            } catch (err) {
+              console.warn(`Failed to create local branch ${localBranchName}: ${err.message}`);
+            }
+          }
+        }
+      }
+
+      await forkedGit.checkout(currentBranch);
 
       const repoWithOwner = await this.repoRepository.findOne({
-        where: { repoId: repo.repoId },
+        where: { repoId: savedRepo.repoId },
         relations: ["owner"],
       });
 
@@ -200,21 +258,23 @@ export class ReposService extends BaseRepoService {
 
       await this.pullRequestRepository.delete({ repoId });
 
-      if (repo.gitPath) {
+      const collaborators = await this.collaboratorRepository.find({
+        where: { repoId },
+      });
+      const allUserIds = [repo.ownerId, ...collaborators.map(c => c.userId)];
+
+      for (const uid of allUserIds) {
+        const userRepoPath = path.join(this.repoBasePath, uid, repoId);
         try {
-          await fs.rm(repo.gitPath, { recursive: true, force: true });
+          await fs.rm(userRepoPath, { recursive: true, force: true });
         } catch (error) {
           if (error.code !== "ENOENT") {
-            throw error;
+            console.warn(`Failed to delete user repo path ${userRepoPath}: ${error.message}`);
           }
         }
       }
 
-      const env = this.configService.get<string>("ENV", "dev");
-      const remotePathKey = env === "prod" ? "REMOTE_BASE_PATH" : "REMOTE_LOCAL_BASE_PATH";
-      const remoteBasePath = this.configService.get<string>(remotePathKey, "data/remote");
-      const remotePath = path.join(remoteBasePath, `${repoId}.git`);
-
+      const remotePath = path.join(this.remoteBasePath, `${repoId}.git`);
       try {
         await fs.rm(remotePath, { recursive: true, force: true });
       } catch (error) {
