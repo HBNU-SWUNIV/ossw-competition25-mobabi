@@ -12,7 +12,7 @@ export function AuthProvider({ children }) {
             try {
                 const t = getToken();
                 if (t) {
-                    const me = await api.user.me();
+                    const me = await api.users.me(); // users.me 호출
                     setUser(me);
                 } else {
                     setUser(null);
@@ -30,7 +30,7 @@ export function AuthProvider({ children }) {
     }, []);
 
     const refresh = async () => {
-        const me = await api.user.me();
+        const me = await api.users.me(); // users.me 호출
         setUser(me);
         return me;
     };
@@ -40,25 +40,42 @@ export function AuthProvider({ children }) {
             localStorage.removeItem("selectedRepoId");
         } catch {}
 
-        const res = await api.auth.signin({ email, password });
-        const token = res?.token || res?.accessToken || res?.access_token || res?.jwt || res?.id_token;
-        if (!token) throw new Error("로그인 토큰을 받지 못했습니다.");
-        setToken(token);
+        const res = await api.auth.login({ email, password }); // auth.login 호출
+
+        const accessToken = res?.accessToken;
+        const refreshToken = res?.refreshToken;
+
+        if (!accessToken || !refreshToken) {
+            throw new Error("로그인 토큰을 받지 못했습니다.");
+        }
+
+        setToken(accessToken, refreshToken);
         return await refresh();
     };
 
-    const signout = async () => {
-        try { await api.auth.signout(); } catch {}
+    const logout = async () => {
+        try {
+            await api.auth.logout(); // auth.logout 호출
+        } catch (err) {
+            console.error("Logout API failed:", err);
+        }
+
         clearToken();
         setUser(null);
         try {
             localStorage.removeItem("selectedRepoId");
         } catch {}
-        window.location.assign("/login");
+
+        try {
+            const base = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) || "/mobabi/ui";
+            window.location.assign(`${base}/`);
+        } catch {
+            window.location.assign("/");
+        }
     };
 
     return (
-        <AuthCtx.Provider value={{ user, busy, setUser, refresh, login, signout }}>
+        <AuthCtx.Provider value={{ user, busy, setUser, refresh, login, logout }}>
             {children}
         </AuthCtx.Provider>
     );

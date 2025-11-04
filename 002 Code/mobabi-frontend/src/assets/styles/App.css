@@ -72,6 +72,13 @@ body {
     position: sticky;
     top: 0;
     z-index: 10;
+    justify-content: space-between;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px; /* 버튼 사이 간격 */
 }
 
 .app-logo img {
@@ -1086,8 +1093,9 @@ body {
 .pr-detail-view {
     display: flex;
     flex-direction: column;
-    gap: 16px
+    gap: 16px;
 }
+
 
 .pr-detail-header {
     display: flex;
@@ -2601,8 +2609,8 @@ input:checked + .slider:before {
    14) Beginner Help Modal (Paginated)
 ========================= */
 .help-modal {
-    width: min(600px, 92vw); /* 너비 유지 */
-    max-height: 80vh; /* 높이 제한 유지 */
+    width: min(600px, 92vw); /* 너비 고정 */
+    height: 45vh; /* 높이 고정 (넉넉하게) */
     display: flex; /* 내부 요소 정렬 위해 추가 */
     flex-direction: column; /* 세로 정렬 */
 }
@@ -2610,10 +2618,11 @@ input:checked + .slider:before {
 .help-modal-head h4 {
     color: var(--accent); /* 제목 색상 강조 */
     font-weight: 700;
+    font-size: 1.1rem; /* 제목 크기 설정 (약 18px) */
 }
 
 .help-content { /* 기존 스타일 유지 */
-    font-size: 0.9rem;
+    font-size: 1rem;
     line-height: 1.7;
     color: var(--sub);
 }
@@ -2715,4 +2724,510 @@ input:checked + .slider:before {
 .help-button:hover {
     background-color: #3a47c4; /* 호버 시 살짝 어둡게 */
     transform: scale(1.1); /* 호버 시 살짝 크게 */
+}
+
+/* --- PR 리뷰 폼 스타일 --- */
+.review-form {
+    display: grid;
+    gap: 12px;
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid var(--line);
+}
+
+.review-form textarea.input {
+    width: 100%;
+    box-sizing: border-box; /* 패딩이 너비를 넘지 않도록 */
+}
+
+/* 버튼들을 감싸는 영역 */
+.review-form-actions {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-end; /* 버튼들을 오른쪽으로 정렬 */
+}
+
+/* Push/Pull 드롭다운 메뉴 항목(버튼) 세로 정렬 */
+.combo-menu .combo-item {
+    display: block;
+    width: 100%;
+    text-align: left;
+}
+
+.controls .combo-menu {
+    min-width: 200px;
+}
+
+/* 브랜치 그래프 영역 가로 스크롤 적용 */
+.graph-container {
+    overflow-x: auto; /* 내용이 넘칠 때만 가로 스크롤바 표시 */
+    white-space: nowrap; /* 그래프가 줄바꿈되지 않도록 */
+}
+
+/* --- 협업자 모달 스타일 --- */
+.collaborator-list {
+    display: grid;
+    gap: 12px;
+}
+
+.collaborator-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--panel-2);
+    border-radius: var(--border-radius-large);
+}
+
+.collaborator-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.collaborator-email {
+    font-weight: 600;
+    color: var(--text);
+}
+
+.collaborator-role {
+    font-size: 12px;
+    color: var(--sub);
+    text-transform: capitalize;
+}
+
+/* (선택) '제거' 버튼 스타일 (기존 .btn-danger-outline이 없다면) */
+.btn-danger-outline {
+    border: 1px solid var(--danger);
+    color: var(--danger);
+    background: transparent;
+}
+.btn-danger-outline:hover {
+    background: var(--danger);
+    color: white;
+}
+.btn-sm {
+    padding: 4px 10px;
+    font-size: 13px;
+}
+
+/* --- PR 상태 칩 스타일 --- */
+.pr-state-chip {
+    display: inline-block;
+    padding: 3px 10px;
+    font-size: 12px;
+    font-weight: 600;
+    border-radius: 999px;
+    text-transform: uppercase;
+    line-height: 1.4;
+}
+.pr-state-chip.open {
+    color: var(--success);
+    background-color: var(--success-light);
+}
+.pr-state-chip.closed {
+    color: var(--danger);
+    background-color: var(--danger-light);
+}
+.pr-state-chip.merged {
+    color: var(--accent);
+    background-color: var(--accent-light);
+}
+
+/* --- 액션 프로세스 안내 --- */
+.process-alert {
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    background: rgba(59, 130, 246, 0.12);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-bottom: 16px;
+    color: var(--text);
+    box-shadow: 0 6px 18px rgba(15, 23, 42, 0.08);
+}
+
+.process-alert.warning {
+    border-color: rgba(245, 158, 11, 0.45);
+    background: rgba(245, 158, 11, 0.16);
+}
+
+.process-alert.info {
+    border-color: rgba(59, 130, 246, 0.35);
+    background: rgba(59, 130, 246, 0.12);
+}
+
+.process-alert-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.process-alert-title {
+    display: block;
+    font-size: 12px;
+    text-transform: uppercase;
+    color: var(--sub);
+    letter-spacing: 0.08em;
+}
+
+.process-alert-step {
+    display: block;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.process-alert-close {
+    background: transparent;
+    border: none;
+    font-size: 20px;
+    line-height: 1;
+    color: var(--sub);
+    cursor: pointer;
+    padding: 4px;
+    border-radius: 6px;
+    transition: background 0.2s ease;
+}
+
+.process-alert-close:hover {
+    background: rgba(15, 23, 42, 0.08);
+}
+
+.process-alert-body {
+    margin-top: 8px;
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.process-alert-message {
+    margin-top: 12px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.process-alert-message.info {
+    background: rgba(59, 130, 246, 0.16);
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    color: var(--text);
+}
+
+.process-alert-message.warning {
+    background: rgba(245, 158, 11, 0.2);
+    border: 1px solid rgba(245, 158, 11, 0.38);
+    color: var(--text);
+}
+
+.process-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 20px 0 12px;
+    flex-wrap: wrap;
+}
+
+.process-toolbar-buttons {
+    display: inline-flex;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.process-toolbar-hint {
+    font-size: 12px;
+    color: var(--sub);
+}
+
+.changes-preview-panel {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--panel);
+    padding: 12px 0 4px;
+    margin-bottom: 12px;
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+}
+
+.changes-preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 16px 8px;
+}
+
+.changes-preview-header h4 {
+    margin: 0;
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.diff-page-container.embedded {
+    padding: 0 16px;
+}
+
+.diff-page-container.embedded .sub-tabs {
+    margin-bottom: 12px;
+}
+
+.diff-page-container.embedded .changes-container {
+    flex-direction: column;
+}
+
+.diff-page-container.embedded .working-diff-panel,
+.diff-page-container.embedded .staged-diff-panel {
+    flex: 1 1 100%;
+}
+
+/* =========================
+   16) User Dropdown Menu
+========================= */
+.user-dropdown {
+    position: relative;
+}
+
+.user-email-button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 18px;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    color: var(--text);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.user-email-button:hover {
+    background: var(--accent-light);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.dropdown-arrow {
+    font-size: 10px;
+    color: var(--sub);
+}
+
+.user-dropdown-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: var(--shadow);
+    min-width: 200px;
+    z-index: 1000;
+    overflow: hidden;
+}
+
+.dropdown-divider {
+    height: 1px;
+    background: var(--line);
+    margin: 4px 0;
+}
+
+.dropdown-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 12px 16px;
+    background: transparent;
+    border: none;
+    color: var(--text);
+    font-size: 14px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.dropdown-item:hover {
+    background: var(--accent-light);
+    color: var(--accent);
+}
+
+.logout-toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 16px;
+}
+
+.logout-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.toggle-switch.small {
+    width: 42px;
+    height: 24px;
+}
+
+.toggle-switch.small .slider {
+    border-radius: 24px;
+}
+
+.toggle-switch.small .slider:before {
+    height: 18px;
+    width: 18px;
+    bottom: 3px;
+}
+
+.toggle-switch.small input:checked + .slider:before {
+    transform: translateX(18px);
+}
+
+.settings-page {
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    padding: 40px 20px;
+    background: var(--bg);
+}
+
+.settings-container {
+    width: 100%;
+    max-width: 600px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 32px;
+}
+
+.settings-title {
+    margin: 0 0 24px;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text);
+    border-bottom: 2px solid var(--line);
+    padding-bottom: 16px;
+}
+
+.settings-tabs {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid var(--line);
+}
+
+.settings-tab {
+    padding: 12px 20px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--sub);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    position: relative;
+    top: 1px;
+}
+
+.settings-tab:hover {
+    color: var(--text);
+}
+
+.settings-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+}
+
+.settings-section {
+    margin-bottom: 24px;
+}
+
+.settings-section h2 {
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0 0 16px;
+}
+
+.settings-form {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.danger-zone {
+    background: #fff5f5;
+    border: 1px solid #fed7d7;
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.danger-warning {
+    color: #c53030;
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0 0 16px;
+    line-height: 1.6;
+}
+
+.btn-danger {
+    background: var(--danger);
+    color: #fff;
+    border-color: var(--danger);
+}
+
+.btn-danger:hover:not(:disabled) {
+    background: #c53030;
+    border-color: #c53030;
+}
+
+.btn-danger:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.auth-success {
+    padding: 12px;
+    background: #e9fbf0;
+    border: 1px solid #bfeecf;
+    border-radius: 8px;
+    color: var(--success);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+:root {
+    --bg: #f9fafc;
+    --panel: #fff;
+    --panel-2: #f5f7fb;
+    --text: #1a1d29;
+    --sub: #5a6170;
+    --muted: #8b90a5;
+    --accent: #4B5AE4;
+    --accent-light: #eef0ff;
+    --danger: #ef4444;
+    --success: #22c55e;
+    --warn: #f59e0b;
+    --line: #e5e8f0;
+    --chip: #f0f2f9;
+    --radius: 14px;
+    --shadow: 0 4px 12px rgba(0, 0, 0, .06);
+
+    /* --- 👇 스플래시 페이지용 변수 추가 --- */
+    --bg-color: var(--panel);
+    --bg-color-alt: var(--bg);
+    --text-color: var(--text);
+    --text-color-light: var(--sub);
+    --heading-color: var(--text);
+    --primary-color: var(--accent);
+    --border-color: var(--line);
+    --border-radius-small: 8px;
+    --border-radius-large: 12px;
+    --shadow-small: 0 2px 4px rgba(0, 0, 0, .04);
+    --shadow-medium: 0 6px 12px rgba(0, 0, 0, .08);
+    --shadow-extra-small: 0 1px 2px rgba(0, 0, 0, .03);
+    --code-bg: #282c34; /* AI 코드 블록 배경 */
 }

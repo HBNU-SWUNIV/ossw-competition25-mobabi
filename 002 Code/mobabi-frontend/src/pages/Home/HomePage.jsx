@@ -14,7 +14,7 @@ import PullRequestDetailView from "../../features/Visualization/PullRequestDetai
 import FileBrowserView from "../../features/FileBrowser/FileBrowserView";
 import DiffView from "../../features/Diff/DiffView";
 import { useAuth } from "../../features/auth/AuthContext";
-import BeginnerHelp from "../BeginnerHelp"; // --- 👇 도움말 모달 import ---
+import BeginnerHelp from "../BeginnerHelp";
 
 export default function HomePage(){
     const loc = useLocation();
@@ -61,9 +61,32 @@ export default function HomePage(){
         })();
     }, [user, dispatch, state.selectedRepoId]);
 
+    useEffect(() => {
+        const repoId = state.selectedRepoId;
+        if (!repoId) {
+            return;
+        }
+
+        let cancelled = false;
+
+        api.pullRequests.list(repoId)
+            .then(data => {
+                if (cancelled) return;
+                const next = data?.pullRequests || data || [];
+                dispatch({ type: 'SET_PRS', payload: Array.isArray(next) ? next : [] });
+            })
+            .catch(err => {
+                if (cancelled) return;
+                console.error('[HomePage] Failed to refresh PR list:', err);
+            });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [dispatch, state.selectedRepoId, state.graphVersion]);
+
 
     const renderCurrentView = () => {
-        // ... (renderCurrentView 코드는 이전과 동일) ...
         switch (state.currentView) {
             case "graph":
                 return (
@@ -120,13 +143,6 @@ export default function HomePage(){
                                 onClick={() => dispatch({ type: "SET_VIEW", payload: "files" })}
                             >
                                 파일
-                            </button>
-
-                            <button
-                                className={`tab-btn ${state.currentView === "diff" ? "active" : ""}`}
-                                onClick={() => dispatch({ type: "SET_VIEW", payload: "diff" })}
-                            >
-                                변경 사항
                             </button>
 
                             <button
